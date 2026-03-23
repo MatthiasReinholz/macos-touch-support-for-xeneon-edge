@@ -8,16 +8,23 @@ APP_CONTENTS := $(APP_BUNDLE)/Contents
 APP_MACOS := $(APP_CONTENTS)/MacOS
 APP_RESOURCES := $(APP_CONTENTS)/Resources
 APP_EXECUTABLE := $(APP_MACOS)/XeneonTouchSupport
+APP_SIGN_MARKER := $(APP_CONTENTS)/.signed
 INFO_PLIST_SRC := packaging/Info.plist
 INFO_PLIST_DST := $(APP_CONTENTS)/Info.plist
 ZIP_OUT := $(BUILD_DIR)/XeneonTouchSupport-macOS.zip
 SIGN_IDENTITY ?= -
 APP_IDENTIFIER := com.matthias.xeneon-touch-support
+SIGN_FLAGS := --force --sign "$(SIGN_IDENTITY)" --identifier "$(APP_IDENTIFIER)" --timestamp=none
+ifeq ($(SIGN_IDENTITY),-)
+SIGN_FLAGS +=
+else
+SIGN_FLAGS += --options runtime
+endif
 
 CFLAGS := -fobjc-arc -Wall -Wextra -Wpedantic
 FRAMEWORKS := -framework AppKit -framework ApplicationServices -framework IOKit
 
-.PHONY: build app zip run clean
+.PHONY: build app package zip run clean
 
 build: $(OUT)
 
@@ -25,10 +32,13 @@ $(OUT): $(SRC)
 	mkdir -p $(BUILD_DIR)
 	clang $(CFLAGS) $(FRAMEWORKS) $(SRC) -o $(OUT)
 
-app: $(APP_EXECUTABLE) $(INFO_PLIST_DST)
-	codesign --force --sign "$(SIGN_IDENTITY)" --identifier "$(APP_IDENTIFIER)" --timestamp=none "$(APP_EXECUTABLE)"
-	codesign --force --deep --sign "$(SIGN_IDENTITY)" --identifier "$(APP_IDENTIFIER)" --timestamp=none "$(APP_BUNDLE)"
+app: $(APP_SIGN_MARKER)
+
+$(APP_SIGN_MARKER): $(APP_EXECUTABLE) $(INFO_PLIST_DST)
+	codesign $(SIGN_FLAGS) "$(APP_EXECUTABLE)"
+	codesign $(SIGN_FLAGS) --deep "$(APP_BUNDLE)"
 	codesign --verify --deep --strict "$(APP_BUNDLE)"
+	touch "$(APP_SIGN_MARKER)"
 
 $(APP_EXECUTABLE): $(OUT)
 	mkdir -p "$(APP_MACOS)" "$(APP_RESOURCES)"
@@ -38,9 +48,13 @@ $(INFO_PLIST_DST): $(INFO_PLIST_SRC)
 	mkdir -p "$(APP_CONTENTS)"
 	cp "$(INFO_PLIST_SRC)" "$(INFO_PLIST_DST)"
 
-zip: app
+package: $(ZIP_OUT)
+
+$(ZIP_OUT): $(APP_SIGN_MARKER)
 	rm -f "$(ZIP_OUT)"
 	cd "$(BUILD_DIR)" && ditto -c -k --sequesterRsrc --keepParent "$(APP_BUNDLE_NAME)" "$(notdir $(ZIP_OUT))"
+
+zip: package
 
 run: $(OUT)
 	./$(OUT)

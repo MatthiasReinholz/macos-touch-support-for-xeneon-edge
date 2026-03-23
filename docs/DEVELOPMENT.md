@@ -31,11 +31,41 @@ The workflow:
 1. checks out the repository on a macOS runner
 2. calculates the next `vX.Y.Z` tag from the latest existing release tag for manual runs
 3. creates that tag if it does not already exist
-4. runs `make clean zip`
-5. uploads `build/XeneonTouchSupport-macOS.zip`
-6. publishes a GitHub release and attaches the zip
+4. signs the app with `Developer ID Application` if Apple signing secrets are configured
+5. notarizes and staples the app if Apple notarization secrets are configured
+6. falls back to ad-hoc signing if those secrets are not configured
+7. packages `build/XeneonTouchSupport-macOS.zip`
+8. uploads the zip
+9. publishes a GitHub release and attaches the zip
 
 This gives you an end-to-end remote build path for release generation without requiring a local macOS packaging step each time.
+
+### Optional Apple signing and notarization
+
+The workflow is prepared for two modes:
+
+- no Apple credentials configured: builds an ad-hoc signed app, like the current local developer flow
+- Apple signing credentials configured: builds a `Developer ID Application` signed app
+- Apple signing and notarization credentials configured: builds a signed, notarized, and stapled app
+
+Configure these GitHub secrets when you are ready:
+
+- `APPLE_SIGNING_CERTIFICATE_P12_BASE64`: base64-encoded `.p12` certificate export
+- `APPLE_SIGNING_CERTIFICATE_PASSWORD`: password for that `.p12`
+- `APPLE_SIGNING_IDENTITY`: full signing identity, for example `Developer ID Application: Your Name (TEAMID)`
+- `APPLE_ID`: Apple ID email used for notarization
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password for notarization
+- `APPLE_TEAM_ID`: Apple Developer Team ID
+
+Recommended setup:
+
+1. export your `Developer ID Application` certificate as a `.p12`
+2. base64-encode it
+3. store the values above as GitHub repository secrets
+4. rerun the release workflow
+
+If only the signing secrets are present, the workflow signs but does not notarize.
+If both signing and notarization secrets are present, the workflow signs, notarizes, staples, and then packages the final zip.
 
 ## Output paths
 
