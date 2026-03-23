@@ -128,11 +128,56 @@ jobs:
           name: XeneonTouchSupport-macOS
           path: build/XeneonTouchSupport-macOS.zip
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2.5.0
+      - name: Create or update GitHub release
+        uses: actions/github-script@v8
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          NAME: ${{ steps.meta.outputs.name }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.name }}
-          prerelease: ${{ steps.meta.outputs.prerelease }}
-          files: build/XeneonTouchSupport-macOS.zip
-          generate_release_notes: true
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const tag = process.env.TAG;
+            const name = process.env.NAME;
+            const prerelease = process.env.PRERELEASE === "true";
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag,
+              });
+
+              await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: existing.data.id,
+                tag_name: tag,
+                name,
+                prerelease,
+                draft: false,
+              });
+              core.info(`Updated release ${tag}.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name,
+                prerelease,
+                draft: false,
+                generate_release_notes: true,
+                target_commitish: context.sha,
+              });
+              core.info(`Created release ${tag}.`);
+            }
+
+      - name: Upload release asset
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ steps.meta.outputs.tag }}" build/XeneonTouchSupport-macOS.zip --clobber
