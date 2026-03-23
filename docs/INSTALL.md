@@ -18,7 +18,7 @@ Install it like a normal Mac app:
 6. Quit and relaunch the app after changing permissions.
 
 The app runs as a menu bar utility with a small `XE` status item.
-The `XE` menu shows whether the XENEON display is recognized, whether permissions are granted, whether a matching touch device is present, and the last 5 minutes of app logs.
+The `XE` menu shows whether the XENEON display is recognized, whether permissions are granted, whether a matching touch device is present, and offers a `Copy Diagnostics` action.
 
 ## First launch checklist
 

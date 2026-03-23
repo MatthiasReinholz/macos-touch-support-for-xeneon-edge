@@ -25,7 +25,8 @@ The menu bar app now shows:
 - whether the XENEON display is currently recognized
 - whether Accessibility and Input Monitoring are granted
 - whether a matching touch device is connected
-- recent in-app logs from the last 5 minutes
+- a `Copy Diagnostics` action with recent in-memory logs from the last 5 minutes
+- an `Info` window with project details and the GitHub link
 
 ## What the app currently does
 
@@ -47,6 +48,8 @@ That means:
 - the native touchscreen path is not fully replaced at the OS level
 
 If behavior is strange in a specific app, see [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+If permissions seem stuck even after you have granted them, fully remove the app’s entries from both `Accessibility` and `Input Monitoring`, then add the app again and relaunch it.
 
 ## GitHub releases
 

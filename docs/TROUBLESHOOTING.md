@@ -28,6 +28,8 @@ Use the `XE` menu to check:
 
 If Input Monitoring is still missing, remove the app from `Input Monitoring`, launch it again, approve the prompt, and relaunch once more.
 
+If the app still does not recognize the permissions after that, remove its entries from both `Accessibility` and `Input Monitoring`, then add the app again and relaunch it.
+
 ## The wrong display is detected
 
 The app matches the target display by:
@@ -77,3 +79,7 @@ Check the startup log for:
 Use the `XE` menu bar item and choose `Quit`.
 
 If the menu bar item is not visible, quit the app from Activity Monitor.
+
+## I want to send diagnostics
+
+Use the `XE` menu and choose `Copy Diagnostics`, then paste the report into an issue or support message.

@@ -33,12 +33,13 @@ static void XeneonRuntimeLog(NSString *format, ...) {
     va_start(args, format);
     va_list copiedArgs;
     va_copy(copiedArgs, args);
-    NSLogv(format, args);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:copiedArgs];
     va_end(copiedArgs);
     va_end(args);
 
     if (message.length > 0) {
+        fprintf(stderr, "%s\n", message.UTF8String);
+        fflush(stderr);
         [gActiveRuntime recordLogMessage:message];
     }
 }
@@ -91,6 +92,7 @@ static void XeneonRuntimeLog(NSString *format, ...) {
 @property(nonatomic, assign) CFRunLoopSourceRef eventTapSource;
 @property(nonatomic, assign) BOOL accessibilityTrusted;
 @property(nonatomic, assign) BOOL inputMonitoringTrusted;
+@property(nonatomic, assign) BOOL postEventTrusted;
 @property(nonatomic, assign) BOOL nativeMouseSuppressionTapActive;
 @property(nonatomic, assign) BOOL hidManagerAvailable;
 @property(nonatomic, assign) BOOL hidManagerOpenSucceeded;
@@ -108,6 +110,8 @@ static void XeneonRuntimeLog(NSString *format, ...) {
 - (NSString *)displayStatusSummary;
 - (NSString *)permissionStatusSummary;
 - (NSString *)touchDeviceStatusSummary;
+- (NSString *)diagnosticsReport;
+- (void)refreshPermissionStatusWithPrompt:(BOOL)prompt;
 @end
 
 @interface XeneonAppDelegate : NSObject <NSApplicationDelegate>
@@ -118,8 +122,7 @@ static void XeneonRuntimeLog(NSString *format, ...) {
 @property(nonatomic, strong) NSMenuItem *displayItem;
 @property(nonatomic, strong) NSMenuItem *permissionItem;
 @property(nonatomic, strong) NSMenuItem *touchItem;
-@property(nonatomic, strong) NSMenuItem *logsItem;
-@property(nonatomic, strong) NSMenu *logsSubmenu;
+@property(nonatomic, strong) NSTimer *refreshTimer;
 @end
 
 static NSString *StringProperty(IOHIDDeviceRef device, CFStringRef key) {
@@ -735,6 +738,7 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
         _targetDisplayID = kCGNullDirectDisplay;
         _accessibilityTrusted = NO;
         _inputMonitoringTrusted = NO;
+        _postEventTrusted = NO;
         _nativeMouseSuppressionTapActive = NO;
         _hidManagerAvailable = NO;
         _hidManagerOpenSucceeded = NO;
@@ -831,6 +835,9 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     if (!self.inputMonitoringTrusted) {
         return @"Status: Waiting for Input Monitoring permission";
     }
+    if (!self.postEventTrusted) {
+        return @"Status: Waiting for synthetic event permission";
+    }
     if (self.targetScreen == nil) {
         return @"Status: XENEON display not detected";
     }
@@ -851,9 +858,10 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
 }
 
 - (NSString *)permissionStatusSummary {
-    return [NSString stringWithFormat:@"Permissions: Accessibility %@, Input Monitoring %@",
+    return [NSString stringWithFormat:@"Permissions: Accessibility %@, Input Monitoring %@, Event Posting %@",
             self.accessibilityTrusted ? @"yes" : @"no",
-            self.inputMonitoringTrusted ? @"yes" : @"no"];
+            self.inputMonitoringTrusted ? @"yes" : @"no",
+            self.postEventTrusted ? @"yes" : @"no"];
 }
 
 - (NSString *)touchDeviceStatusSummary {
@@ -861,6 +869,53 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
         return @"Touch device: none matched";
     }
     return [NSString stringWithFormat:@"Touch device: %lu matched", (unsigned long)self.matchedTouchDeviceCount];
+}
+
+- (NSString *)diagnosticsReport {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    NSDictionary *infoDictionary = NSBundle.mainBundle.infoDictionary;
+    NSString *bundleIdentifier = NSBundle.mainBundle.bundleIdentifier != nil ? NSBundle.mainBundle.bundleIdentifier : @"<none>";
+    NSString *version = infoDictionary[@"CFBundleShortVersionString"] != nil ? infoDictionary[@"CFBundleShortVersionString"] : @"<unknown>";
+
+    [lines addObject:@"XENEON Touch Support Diagnostics"];
+    [lines addObject:[NSString stringWithFormat:@"Timestamp: %@", [NSDate date]]];
+    [lines addObject:[NSString stringWithFormat:@"Bundle identifier: %@", bundleIdentifier]];
+    [lines addObject:[NSString stringWithFormat:@"Version: %@", version]];
+    [lines addObject:[self runtimeStatusSummary]];
+    [lines addObject:[self displayStatusSummary]];
+    [lines addObject:[self permissionStatusSummary]];
+    [lines addObject:[self touchDeviceStatusSummary]];
+    [lines addObject:[NSString stringWithFormat:@"HID manager available: %@", self.hidManagerAvailable ? @"yes" : @"no"]];
+    [lines addObject:[NSString stringWithFormat:@"HID manager open succeeded: %@", self.hidManagerOpenSucceeded ? @"yes" : @"no"]];
+    [lines addObject:[NSString stringWithFormat:@"Native mouse suppression tap active: %@", self.nativeMouseSuppressionTapActive ? @"yes" : @"no"]];
+
+    [lines addObject:@"Screens:"];
+    for (NSScreen *screen in NSScreen.screens) {
+        NSRect frame = screen.frame;
+        CGDirectDisplayID displayID = DisplayIDForScreen(screen);
+        BOOL isTarget = self.targetScreen != nil && displayID == self.targetDisplayID;
+        NSString *screenName = screen.localizedName != nil ? screen.localizedName : @"<unnamed>";
+        [lines addObject:[NSString stringWithFormat:@"- %@%@ id=%u frame=x=%d y=%d w=%d h=%d",
+                          isTarget ? @"* " : @"",
+                          screenName,
+                          displayID,
+                          (int)frame.origin.x,
+                          (int)frame.origin.y,
+                          (int)frame.size.width,
+                          (int)frame.size.height]];
+    }
+
+    [lines addObject:@"Recent logs (last 5 min):"];
+    NSArray<NSString *> *recentLogLines = [self recentLogLines];
+    if (recentLogLines.count == 0) {
+        [lines addObject:@"- <none>"];
+    } else {
+        for (NSString *line in recentLogLines) {
+            [lines addObject:[NSString stringWithFormat:@"- %@", line]];
+        }
+    }
+
+    return [lines componentsJoinedByString:@"\n"];
 }
 
 - (void)startNativeMouseSuppressionTap {
@@ -921,25 +976,50 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     NSLog(@"Restore cursor delay: %u ms", self.restoreCursorDelayMicroseconds / 1000);
 }
 
-- (void)logAccessibilityStatusAndPromptIfNeeded {
-    NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt : @YES };
-    BOOL trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
-    self.accessibilityTrusted = trusted;
-    self.inputMonitoringTrusted = CGPreflightListenEventAccess();
+- (void)refreshPermissionStatusWithPrompt:(BOOL)prompt {
+    BOOL previousAccessibilityTrusted = self.accessibilityTrusted;
+    BOOL previousInputMonitoringTrusted = self.inputMonitoringTrusted;
+    BOOL previousPostEventTrusted = self.postEventTrusted;
 
-    NSLog(@"Accessibility trusted: %@", trusted ? @"YES" : @"NO");
-    if (!trusted) {
-        NSLog(@"Grant Accessibility and Input Monitoring to the app that launched this process, and if needed to this binary as well.");
-        NSLog(@"If you launched the raw binary from Terminal, grant permissions to Terminal as well.");
+    if (prompt) {
+        NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt : @YES };
+        self.accessibilityTrusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+    } else {
+        self.accessibilityTrusted = AXIsProcessTrusted();
     }
+    self.inputMonitoringTrusted = CGPreflightListenEventAccess();
+    self.postEventTrusted = CGPreflightPostEventAccess();
 
-    NSLog(@"Input Monitoring trusted: %@", self.inputMonitoringTrusted ? @"YES" : @"NO");
-    if (!self.inputMonitoringTrusted) {
-        BOOL requestIssued = CGRequestListenEventAccess();
-        NSLog(@"Requested Input Monitoring access: %@", requestIssued ? @"YES" : @"NO");
+    if (prompt) {
+        NSLog(@"Accessibility trusted: %@", self.accessibilityTrusted ? @"YES" : @"NO");
+        NSLog(@"Input Monitoring trusted: %@", self.inputMonitoringTrusted ? @"YES" : @"NO");
+        NSLog(@"Synthetic event posting trusted: %@", self.postEventTrusted ? @"YES" : @"NO");
+        if (!self.accessibilityTrusted) {
+            NSLog(@"Grant Accessibility and Input Monitoring to the app that launched this process, and if needed to this binary as well.");
+            NSLog(@"If you launched the raw binary from Terminal, grant permissions to Terminal as well.");
+        }
+        if (!self.inputMonitoringTrusted) {
+            BOOL requestIssued = CGRequestListenEventAccess();
+            NSLog(@"Requested Input Monitoring access: %@", requestIssued ? @"YES" : @"NO");
+        }
+        if (!self.postEventTrusted) {
+            BOOL requestIssued = CGRequestPostEventAccess();
+            NSLog(@"Requested synthetic event posting access: %@", requestIssued ? @"YES" : @"NO");
+        }
+    } else if (previousAccessibilityTrusted != self.accessibilityTrusted ||
+               previousInputMonitoringTrusted != self.inputMonitoringTrusted ||
+               previousPostEventTrusted != self.postEventTrusted) {
+        NSLog(@"Permission state changed. Accessibility=%@ InputMonitoring=%@ EventPosting=%@",
+              self.accessibilityTrusted ? @"YES" : @"NO",
+              self.inputMonitoringTrusted ? @"YES" : @"NO",
+              self.postEventTrusted ? @"YES" : @"NO");
     }
 
     [self notifyStatusChanged];
+}
+
+- (void)logAccessibilityStatusAndPromptIfNeeded {
+    [self refreshPermissionStatusWithPrompt:YES];
 }
 
 - (void)refreshTargetDisplay {
@@ -1490,12 +1570,17 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     self.touchItem.enabled = NO;
     [self.statusMenu addItem:self.touchItem];
 
-    self.logsSubmenu = [[NSMenu alloc] initWithTitle:@"Recent Logs"];
-    self.logsItem = [[NSMenuItem alloc] initWithTitle:@"Recent Logs (last 5 min)"
-                                               action:nil
-                                        keyEquivalent:@""];
-    self.logsItem.submenu = self.logsSubmenu;
-    [self.statusMenu addItem:self.logsItem];
+    NSMenuItem *copyDiagnosticsItem = [[NSMenuItem alloc] initWithTitle:@"Copy Diagnostics"
+                                                                 action:@selector(copyDiagnostics:)
+                                                          keyEquivalent:@""];
+    copyDiagnosticsItem.target = self;
+    [self.statusMenu addItem:copyDiagnosticsItem];
+
+    NSMenuItem *infoItem = [[NSMenuItem alloc] initWithTitle:@"Info"
+                                                      action:@selector(showInfo:)
+                                               keyEquivalent:@""];
+    infoItem.target = self;
+    [self.statusMenu addItem:infoItem];
 
     [self.statusMenu addItem:[NSMenuItem separatorItem]];
 
@@ -1513,6 +1598,11 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     self.statusItem.menu = self.statusMenu;
 
     [self.runtime start];
+    self.refreshTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
+                                                         target:self
+                                                       selector:@selector(refreshRuntimeState)
+                                                       userInfo:nil
+                                                        repeats:YES];
     [self updateStatusMenu];
 }
 
@@ -1533,29 +1623,48 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
                                           self.displayItem.title,
                                           self.permissionItem.title];
     }
+}
 
-    [self.logsSubmenu removeAllItems];
-    NSArray<NSString *> *recentLogLines = [self.runtime recentLogLines];
-    if (recentLogLines.count == 0) {
-        NSMenuItem *emptyItem = [[NSMenuItem alloc] initWithTitle:@"No logs in the last 5 minutes"
-                                                           action:nil
-                                                    keyEquivalent:@""];
-        emptyItem.enabled = NO;
-        [self.logsSubmenu addItem:emptyItem];
-        return;
-    }
+- (void)refreshRuntimeState {
+    [self.runtime refreshPermissionStatusWithPrompt:NO];
+    [self updateStatusMenu];
+}
 
-    for (NSString *line in recentLogLines.reverseObjectEnumerator) {
-        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:line
-                                                      action:nil
-                                               keyEquivalent:@""];
-        item.enabled = NO;
-        [self.logsSubmenu addItem:item];
+- (void)copyDiagnostics:(id)sender {
+    (void)sender;
+    NSString *report = [self.runtime diagnosticsReport];
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    [pasteboard clearContents];
+    [pasteboard setString:report forType:NSPasteboardTypeString];
+    NSLog(@"Copied diagnostics report to the clipboard.");
+    [self updateStatusMenu];
+}
+
+- (void)showInfo:(id)sender {
+    (void)sender;
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"XENEON Touch Support";
+    alert.informativeText =
+        @"Author: Matthias Reinholz\n"
+        @"License: GNU General Public License v3.0\n"
+        @"Repository: github.com/MatthiasReinholz/macos-touch-support-for-xeneon-edge";
+    [alert addButtonWithTitle:@"Open GitHub"];
+    [alert addButtonWithTitle:@"OK"];
+
+    NSModalResponse response = [alert runModal];
+    if (response == NSAlertFirstButtonReturn) {
+        NSURL *url = [NSURL URLWithString:@"https://github.com/MatthiasReinholz/macos-touch-support-for-xeneon-edge"];
+        if (url != nil) {
+            [NSWorkspace.sharedWorkspace openURL:url];
+        }
     }
 }
 
 - (void)quit:(id)sender {
     (void)sender;
+    [self.refreshTimer invalidate];
+    self.refreshTimer = nil;
     [NSApp terminate:nil];
 }
 
