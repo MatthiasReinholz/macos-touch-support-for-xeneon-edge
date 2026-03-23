@@ -6,10 +6,15 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag to create or reuse, for example v0.1.0"
+      release_type:
+        description: "Semantic version bump to apply to the latest release tag"
         required: true
-        type: string
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
       release_name:
         description: "Optional release title"
         required: false
@@ -40,9 +45,40 @@ jobs:
         shell: bash
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            TAG="${{ inputs.tag }}"
+            BUMP="${{ inputs.release_type }}"
             NAME="${{ inputs.release_name }}"
             PRERELEASE="${{ inputs.prerelease }}"
+
+            LATEST_TAG="$(git tag --list 'v*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)"
+            if [[ -z "${LATEST_TAG}" ]]; then
+              MAJOR=0
+              MINOR=0
+              PATCH=0
+            else
+              VERSION="${LATEST_TAG#v}"
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${VERSION}"
+            fi
+
+            case "${BUMP}" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              *)
+                echo "Unsupported release_type: ${BUMP}" >&2
+                exit 1
+                ;;
+            esac
+
+            TAG="v${MAJOR}.${MINOR}.${PATCH}"
           else
             TAG="${GITHUB_REF_NAME}"
             NAME="${GITHUB_REF_NAME}"

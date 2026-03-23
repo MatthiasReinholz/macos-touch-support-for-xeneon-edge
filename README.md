@@ -58,11 +58,12 @@ The repo includes a GitHub Actions release workflow at [.github/workflows/releas
 You can publish a release in either of these ways:
 
 - push a tag like `v0.1.0`
-- open GitHub Actions and manually run `Release macOS App`, then provide a tag such as `v0.1.0`
+- open GitHub Actions and manually run `Release macOS App`, then choose a `patch`, `minor`, or `major` bump
 
 The workflow will:
 
 - build the macOS app bundle on GitHub-hosted macOS runners
+- calculate the next `vX.Y.Z` tag automatically for manual runs
 - package `XeneonTouchSupport.app` into `XeneonTouchSupport-macOS.zip`
 - upload the zip as a workflow artifact
 - create or update the GitHub release and attach the zip

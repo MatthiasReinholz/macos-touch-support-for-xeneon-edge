@@ -20,17 +20,18 @@ Supported release paths:
 
 For manual runs, the workflow accepts:
 
-- `tag`: required release tag
+- `release_type`: required semantic bump choice: `patch`, `minor`, or `major`
 - `release_name`: optional release title
 - `prerelease`: whether the GitHub release should be marked as a prerelease
 
 The workflow:
 
 1. checks out the repository on a macOS runner
-2. creates the tag for manual runs if it does not already exist
-3. runs `make clean zip`
-4. uploads `build/XeneonTouchSupport-macOS.zip`
-5. publishes a GitHub release and attaches the zip
+2. calculates the next `vX.Y.Z` tag from the latest existing release tag for manual runs
+3. creates that tag if it does not already exist
+4. runs `make clean zip`
+5. uploads `build/XeneonTouchSupport-macOS.zip`
+6. publishes a GitHub release and attaches the zip
 
 This gives you an end-to-end remote build path for release generation without requiring a local macOS packaging step each time.
 
