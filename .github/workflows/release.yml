@@ -1,0 +1,100 @@
+name: Release macOS App
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or reuse, for example v0.1.0"
+        required: true
+        type: string
+      release_name:
+        description: "Optional release title"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+            NAME="${{ inputs.release_name }}"
+            PRERELEASE="${{ inputs.prerelease }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            NAME="${GITHUB_REF_NAME}"
+            PRERELEASE="false"
+          fi
+
+          if [[ -z "${NAME}" ]]; then
+            NAME="${TAG}"
+          fi
+
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "name=${NAME}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release tag for manual runs
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = 'refs/tags/${{ steps.meta.outputs.tag }}';
+            try {
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${{ steps.meta.outputs.tag }}`
+              });
+              core.info(`Tag ${{ steps.meta.outputs.tag }} already exists.`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: tag,
+                sha: context.sha
+              });
+              core.info(`Created tag ${{ steps.meta.outputs.tag }} at ${context.sha}.`);
+            }
+
+      - name: Build app bundle and zip
+        run: make clean zip
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XeneonTouchSupport-macOS
+          path: build/XeneonTouchSupport-macOS.zip
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          files: build/XeneonTouchSupport-macOS.zip
+          generate_release_notes: true
