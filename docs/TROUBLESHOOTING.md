@@ -8,6 +8,25 @@ Check these first:
 - Input Monitoring is enabled for `XeneonTouchSupport.app`
 - The app was relaunched after permission changes
 - The XENEON display is connected before the app starts
+- The `XE` menu does not show a missing-permission or missing-display status
+
+## `make run` works, but the packaged app does not
+
+macOS permissions are granted per app.
+
+That means:
+
+- giving Terminal access does not automatically give the packaged app access
+- the packaged app must be granted `Accessibility` and `Input Monitoring` separately
+- after changing those permissions, the packaged app must be quit and relaunched
+
+Use the `XE` menu to check:
+
+- `Permissions: Accessibility yes, Input Monitoring yes`
+- `Display: ... (connected)`
+- `Touch device: ... matched`
+
+If Input Monitoring is still missing, remove the app from `Input Monitoring`, launch it again, approve the prompt, and relaunch once more.
 
 ## The wrong display is detected
 

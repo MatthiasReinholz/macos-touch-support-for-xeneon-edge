@@ -18,6 +18,7 @@ Install it like a normal Mac app:
 6. Quit and relaunch the app after changing permissions.
 
 The app runs as a menu bar utility with a small `XE` status item.
+The `XE` menu shows whether the XENEON display is recognized, whether permissions are granted, whether a matching touch device is present, and the last 5 minutes of app logs.
 
 ## First launch checklist
 
@@ -27,6 +28,7 @@ Expected startup behavior:
 - The console log lists the built-in display and the XENEON EDGE display.
 - The XENEON display is marked as the target display.
 - The matching touchscreen HID devices are listed.
+- The menu shows `Status: Ready` once permissions and device matching are in place.
 
 If that does not happen, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 

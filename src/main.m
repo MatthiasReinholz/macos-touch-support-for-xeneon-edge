@@ -5,6 +5,8 @@
 #import <unistd.h>
 
 static const CFTimeInterval kWarpCooldownSeconds = 0.25;
+static const CFTimeInterval kLogRetentionSeconds = 300.0;
+static const NSUInteger kMaxVisibleLogEntries = 15;
 static const useconds_t kDefaultCursorRestoreDelayMicroseconds = 120000;
 static const useconds_t kDefaultSyntheticMouseMoveDelayMicroseconds = 0;
 static const useconds_t kDefaultSyntheticClickDelayMicroseconds = 0;
@@ -17,10 +19,38 @@ static const CFTimeInterval kDefaultNativeMouseSuppressionSeconds = 0.15;
 static const int64_t kSyntheticEventTag = 0x58454E454F4EULL;
 static const CGFloat kTargetDisplayOwnershipTolerance = 48.0;
 
-@interface XeneonRuntime : NSObject
+@protocol XeneonRuntimeLogCapture <NSObject>
+- (void)recordLogMessage:(NSString *)message;
+@end
+
+static NSString * const XeneonRuntimeStatusDidChangeNotification = @"XeneonRuntimeStatusDidChangeNotification";
+static NSString * const XeneonRuntimeLogsDidChangeNotification = @"XeneonRuntimeLogsDidChangeNotification";
+static __weak id<XeneonRuntimeLogCapture> gActiveRuntime = nil;
+
+static void XeneonRuntimeLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static void XeneonRuntimeLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    va_list copiedArgs;
+    va_copy(copiedArgs, args);
+    NSLogv(format, args);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:copiedArgs];
+    va_end(copiedArgs);
+    va_end(args);
+
+    if (message.length > 0) {
+        [gActiveRuntime recordLogMessage:message];
+    }
+}
+
+#define NSLog XeneonRuntimeLog
+
+@interface XeneonRuntime : NSObject <XeneonRuntimeLogCapture>
 @property(nonatomic, strong) NSArray<NSString *> *displayNameHints;
 @property(nonatomic, strong) NSArray<NSString *> *hidProductNameHints;
 @property(nonatomic, strong) NSMutableSet<NSValue *> *seenDevices;
+@property(nonatomic, strong) NSMutableSet<NSValue *> *matchedDevices;
+@property(nonatomic, strong) NSMutableArray<NSDictionary *> *recentLogEntries;
 @property(nonatomic, strong, nullable) NSScreen *targetScreen;
 @property(nonatomic, assign) CGDirectDisplayID targetDisplayID;
 @property(nonatomic, assign) CGDirectDisplayID configuredDisplayID;
@@ -59,6 +89,12 @@ static const CGFloat kTargetDisplayOwnershipTolerance = 48.0;
 @property(nonatomic, assign) IOHIDManagerRef hidManager;
 @property(nonatomic, assign) CFMachPortRef eventTap;
 @property(nonatomic, assign) CFRunLoopSourceRef eventTapSource;
+@property(nonatomic, assign) BOOL accessibilityTrusted;
+@property(nonatomic, assign) BOOL inputMonitoringTrusted;
+@property(nonatomic, assign) BOOL nativeMouseSuppressionTapActive;
+@property(nonatomic, assign) BOOL hidManagerAvailable;
+@property(nonatomic, assign) BOOL hidManagerOpenSucceeded;
+@property(nonatomic, assign) NSUInteger matchedTouchDeviceCount;
 - (void)run;
 - (void)start;
 - (void)refreshTargetDisplay;
@@ -67,12 +103,23 @@ static const CGFloat kTargetDisplayOwnershipTolerance = 48.0;
 - (void)handleDeviceArrival:(IOHIDDeviceRef)device;
 - (void)handleDeviceRemoval:(IOHIDDeviceRef)device;
 - (void)handleInputValue:(IOHIDValueRef)value;
+- (NSArray<NSString *> *)recentLogLines;
+- (NSString *)runtimeStatusSummary;
+- (NSString *)displayStatusSummary;
+- (NSString *)permissionStatusSummary;
+- (NSString *)touchDeviceStatusSummary;
 @end
 
 @interface XeneonAppDelegate : NSObject <NSApplicationDelegate>
 @property(nonatomic, strong) XeneonRuntime *runtime;
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong) NSMenu *statusMenu;
+@property(nonatomic, strong) NSMenuItem *statusItemMenuEntry;
+@property(nonatomic, strong) NSMenuItem *displayItem;
+@property(nonatomic, strong) NSMenuItem *permissionItem;
+@property(nonatomic, strong) NSMenuItem *touchItem;
+@property(nonatomic, strong) NSMenuItem *logsItem;
+@property(nonatomic, strong) NSMenu *logsSubmenu;
 @end
 
 static NSString *StringProperty(IOHIDDeviceRef device, CFStringRef key) {
@@ -647,6 +694,8 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
         _displayNameHints = DisplayNameHintsFromEnvironment();
         _hidProductNameHints = @[ @"XENEON", @"EDGE", @"TOUCH" ];
         _seenDevices = [NSMutableSet set];
+        _matchedDevices = [NSMutableSet set];
+        _recentLogEntries = [NSMutableArray array];
         _configuredDisplayID = ConfiguredDisplayIDFromEnvironment();
         _configuredVendorID = ConfiguredTouchVendorIDFromEnvironment();
         _configuredProductID = ConfiguredTouchProductIDFromEnvironment();
@@ -684,11 +733,20 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
         _eventTap = NULL;
         _eventTapSource = NULL;
         _targetDisplayID = kCGNullDirectDisplay;
+        _accessibilityTrusted = NO;
+        _inputMonitoringTrusted = NO;
+        _nativeMouseSuppressionTapActive = NO;
+        _hidManagerAvailable = NO;
+        _hidManagerOpenSucceeded = NO;
+        _matchedTouchDeviceCount = 0;
     }
     return self;
 }
 
 - (void)dealloc {
+    if (gActiveRuntime == self) {
+        gActiveRuntime = nil;
+    }
     if (_eventTapSource != NULL) {
         CFRunLoopRemoveSource(CFRunLoopGetCurrent(), _eventTapSource, kCFRunLoopCommonModes);
         CFRelease(_eventTapSource);
@@ -705,6 +763,7 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
 }
 
 - (void)start {
+    gActiveRuntime = self;
     [self printBanner];
     [self logAccessibilityStatusAndPromptIfNeeded];
     [self refreshTargetDisplay];
@@ -716,6 +775,92 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
 - (void)run {
     [self start];
     [[NSRunLoop currentRunLoop] run];
+}
+
+- (void)notifyStatusChanged {
+    [[NSNotificationCenter defaultCenter] postNotificationName:XeneonRuntimeStatusDidChangeNotification object:self];
+}
+
+- (void)pruneRecentLogs {
+    CFAbsoluteTime cutoff = CFAbsoluteTimeGetCurrent() - kLogRetentionSeconds;
+    NSIndexSet *expiredIndexes = [self.recentLogEntries indexesOfObjectsPassingTest:^BOOL(NSDictionary *entry, NSUInteger idx, BOOL *stop) {
+        (void)idx;
+        (void)stop;
+        NSNumber *timestamp = entry[@"timestamp"];
+        return timestamp != nil && timestamp.doubleValue < cutoff;
+    }];
+    if (expiredIndexes.count > 0) {
+        [self.recentLogEntries removeObjectsAtIndexes:expiredIndexes];
+    }
+}
+
+- (void)recordLogMessage:(NSString *)message {
+    if (message.length == 0) {
+        return;
+    }
+
+    [self.recentLogEntries addObject:@{
+        @"timestamp" : @(CFAbsoluteTimeGetCurrent()),
+        @"message" : message,
+    }];
+    [self pruneRecentLogs];
+    [[NSNotificationCenter defaultCenter] postNotificationName:XeneonRuntimeLogsDidChangeNotification object:self];
+}
+
+- (NSArray<NSString *> *)recentLogLines {
+    [self pruneRecentLogs];
+
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.dateFormat = @"HH:mm:ss";
+
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    NSUInteger startIndex = self.recentLogEntries.count > kMaxVisibleLogEntries ? (self.recentLogEntries.count - kMaxVisibleLogEntries) : 0;
+    for (NSUInteger index = startIndex; index < self.recentLogEntries.count; index++) {
+        NSDictionary *entry = self.recentLogEntries[index];
+        NSDate *date = [NSDate dateWithTimeIntervalSinceReferenceDate:[entry[@"timestamp"] doubleValue]];
+        NSString *message = entry[@"message"];
+        [lines addObject:[NSString stringWithFormat:@"%@ %@", [formatter stringFromDate:date], message]];
+    }
+    return lines;
+}
+
+- (NSString *)runtimeStatusSummary {
+    if (!self.accessibilityTrusted) {
+        return @"Status: Waiting for Accessibility permission";
+    }
+    if (!self.inputMonitoringTrusted) {
+        return @"Status: Waiting for Input Monitoring permission";
+    }
+    if (self.targetScreen == nil) {
+        return @"Status: XENEON display not detected";
+    }
+    if (self.matchedTouchDeviceCount == 0) {
+        return @"Status: Waiting for touchscreen device";
+    }
+    if (!self.nativeMouseSuppressionTapActive) {
+        return @"Status: Mouse suppression tap unavailable";
+    }
+    return @"Status: Ready";
+}
+
+- (NSString *)displayStatusSummary {
+    if (self.targetScreen == nil) {
+        return @"Display: not recognized";
+    }
+    return [NSString stringWithFormat:@"Display: %@ (connected)", self.targetScreen.localizedName];
+}
+
+- (NSString *)permissionStatusSummary {
+    return [NSString stringWithFormat:@"Permissions: Accessibility %@, Input Monitoring %@",
+            self.accessibilityTrusted ? @"yes" : @"no",
+            self.inputMonitoringTrusted ? @"yes" : @"no"];
+}
+
+- (NSString *)touchDeviceStatusSummary {
+    if (self.matchedTouchDeviceCount == 0) {
+        return @"Touch device: none matched";
+    }
+    return [NSString stringWithFormat:@"Touch device: %lu matched", (unsigned long)self.matchedTouchDeviceCount];
 }
 
 - (void)startNativeMouseSuppressionTap {
@@ -732,22 +877,28 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
                                      NativeMouseSuppressionCallback,
                                      (__bridge void *)self);
     if (self.eventTap == NULL) {
+        self.nativeMouseSuppressionTapActive = NO;
         NSLog(@"Failed to create HID-level native mouse suppression event tap.");
+        [self notifyStatusChanged];
         return;
     }
 
     self.eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, self.eventTap, 0);
     if (self.eventTapSource == NULL) {
+        self.nativeMouseSuppressionTapActive = NO;
         NSLog(@"Failed to create run-loop source for native mouse suppression event tap.");
         CFMachPortInvalidate(self.eventTap);
         CFRelease(self.eventTap);
         self.eventTap = NULL;
+        [self notifyStatusChanged];
         return;
     }
 
     CFRunLoopAddSource(CFRunLoopGetCurrent(), self.eventTapSource, kCFRunLoopCommonModes);
     CGEventTapEnable(self.eventTap, true);
+    self.nativeMouseSuppressionTapActive = YES;
     NSLog(@"HID-level native mouse suppression tap active.");
+    [self notifyStatusChanged];
 }
 
 - (void)printBanner {
@@ -773,12 +924,22 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
 - (void)logAccessibilityStatusAndPromptIfNeeded {
     NSDictionary *options = @{ (__bridge NSString *)kAXTrustedCheckOptionPrompt : @YES };
     BOOL trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+    self.accessibilityTrusted = trusted;
+    self.inputMonitoringTrusted = CGPreflightListenEventAccess();
 
     NSLog(@"Accessibility trusted: %@", trusted ? @"YES" : @"NO");
     if (!trusted) {
         NSLog(@"Grant Accessibility and Input Monitoring to the app that launched this process, and if needed to this binary as well.");
         NSLog(@"If you launched the raw binary from Terminal, grant permissions to Terminal as well.");
     }
+
+    NSLog(@"Input Monitoring trusted: %@", self.inputMonitoringTrusted ? @"YES" : @"NO");
+    if (!self.inputMonitoringTrusted) {
+        BOOL requestIssued = CGRequestListenEventAccess();
+        NSLog(@"Requested Input Monitoring access: %@", requestIssued ? @"YES" : @"NO");
+    }
+
+    [self notifyStatusChanged];
 }
 
 - (void)refreshTargetDisplay {
@@ -837,14 +998,19 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
                   [self.displayNameHints componentsJoinedByString:@", "]);
         }
     }
+    [self notifyStatusChanged];
 }
 
 - (void)startHIDMonitoring {
     self.hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
     if (self.hidManager == NULL) {
+        self.hidManagerAvailable = NO;
+        self.hidManagerOpenSucceeded = NO;
         NSLog(@"Failed to create IOHIDManager.");
+        [self notifyStatusChanged];
         return;
     }
+    self.hidManagerAvailable = YES;
 
     NSArray *matching = @[
         @{ @kIOHIDPrimaryUsagePageKey : @(kHIDPage_Digitizer) },
@@ -858,12 +1024,16 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
 
     IOReturn openResult = IOHIDManagerOpen(self.hidManager, kIOHIDOptionsTypeNone);
     if (openResult == kIOReturnSuccess) {
+        self.hidManagerOpenSucceeded = YES;
         NSLog(@"HID manager opened successfully.");
     } else if (openResult == kIOReturnExclusiveAccess) {
+        self.hidManagerOpenSucceeded = NO;
         NSLog(@"HID manager open returned kIOReturnExclusiveAccess (%d). Continuing with per-device opens.", openResult);
     } else {
+        self.hidManagerOpenSucceeded = NO;
         NSLog(@"Failed to open HID manager: %d. Continuing with per-device opens.", openResult);
     }
+    [self notifyStatusChanged];
 
     CFSetRef deviceSet = IOHIDManagerCopyDevices(self.hidManager);
     if (deviceSet == NULL) {
@@ -911,6 +1081,9 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     if (!isMatch) {
         return;
     }
+    [self.matchedDevices addObject:deviceKey];
+    self.matchedTouchDeviceCount = self.matchedDevices.count;
+    [self notifyStatusChanged];
 
     IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
     IOHIDDeviceRegisterInputValueCallback(device, InputValueCallback, (__bridge void *)self);
@@ -933,8 +1106,12 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
 }
 
 - (void)handleDeviceRemoval:(IOHIDDeviceRef)device {
-    [self.seenDevices removeObject:[NSValue valueWithPointer:device]];
+    NSValue *deviceKey = [NSValue valueWithPointer:device];
+    [self.seenDevices removeObject:deviceKey];
+    [self.matchedDevices removeObject:deviceKey];
+    self.matchedTouchDeviceCount = self.matchedDevices.count;
     NSLog(@"Device removed: %@", DeviceSummary(device));
+    [self notifyStatusChanged];
 }
 
 - (void)handleInputValue:(IOHIDValueRef)value {
@@ -1272,22 +1449,53 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     (void)notification;
 
     self.runtime = [[XeneonRuntime alloc] init];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(updateStatusMenu)
+                                                 name:XeneonRuntimeStatusDidChangeNotification
+                                               object:self.runtime];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(updateStatusMenu)
+                                                 name:XeneonRuntimeLogsDidChangeNotification
+                                               object:self.runtime];
 
     self.statusMenu = [[NSMenu alloc] initWithTitle:@"XENEON Touch Support"];
 
-    NSMenuItem *titleItem = [[NSMenuItem alloc] initWithTitle:@"XENEON Touch Support is running"
+    NSMenuItem *titleItem = [[NSMenuItem alloc] initWithTitle:@"XENEON Touch Support"
                                                        action:nil
                                                 keyEquivalent:@""];
     titleItem.enabled = NO;
     [self.statusMenu addItem:titleItem];
 
-    NSString *displayHint = [NSString stringWithFormat:@"Target display: %@",
-                             [self.runtime.displayNameHints componentsJoinedByString:@", "]];
-    NSMenuItem *displayItem = [[NSMenuItem alloc] initWithTitle:displayHint
-                                                         action:nil
-                                                  keyEquivalent:@""];
-    displayItem.enabled = NO;
-    [self.statusMenu addItem:displayItem];
+    self.statusItemMenuEntry = [[NSMenuItem alloc] initWithTitle:@"Status: Starting up"
+                                                          action:nil
+                                                   keyEquivalent:@""];
+    self.statusItemMenuEntry.enabled = NO;
+    [self.statusMenu addItem:self.statusItemMenuEntry];
+
+    self.displayItem = [[NSMenuItem alloc] initWithTitle:@"Display: checking..."
+                                                  action:nil
+                                           keyEquivalent:@""];
+    self.displayItem.enabled = NO;
+    [self.statusMenu addItem:self.displayItem];
+
+    self.permissionItem = [[NSMenuItem alloc] initWithTitle:@"Permissions: checking..."
+                                                     action:nil
+                                              keyEquivalent:@""];
+    self.permissionItem.enabled = NO;
+    [self.statusMenu addItem:self.permissionItem];
+
+    self.touchItem = [[NSMenuItem alloc] initWithTitle:@"Touch device: checking..."
+                                                action:nil
+                                         keyEquivalent:@""];
+    self.touchItem.enabled = NO;
+    [self.statusMenu addItem:self.touchItem];
+
+    self.logsSubmenu = [[NSMenu alloc] initWithTitle:@"Recent Logs"];
+    self.logsItem = [[NSMenuItem alloc] initWithTitle:@"Recent Logs (last 5 min)"
+                                               action:nil
+                                        keyEquivalent:@""];
+    self.logsItem.submenu = self.logsSubmenu;
+    [self.statusMenu addItem:self.logsItem];
 
     [self.statusMenu addItem:[NSMenuItem separatorItem]];
 
@@ -1305,11 +1513,45 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     self.statusItem.menu = self.statusMenu;
 
     [self.runtime start];
+    [self updateStatusMenu];
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
     (void)sender;
     return NO;
+}
+
+- (void)updateStatusMenu {
+    self.statusItemMenuEntry.title = [self.runtime runtimeStatusSummary];
+    self.displayItem.title = [self.runtime displayStatusSummary];
+    self.permissionItem.title = [self.runtime permissionStatusSummary];
+    self.touchItem.title = [self.runtime touchDeviceStatusSummary];
+
+    if (self.statusItem.button != nil) {
+        self.statusItem.button.toolTip = [NSString stringWithFormat:@"%@\n%@\n%@",
+                                          self.statusItemMenuEntry.title,
+                                          self.displayItem.title,
+                                          self.permissionItem.title];
+    }
+
+    [self.logsSubmenu removeAllItems];
+    NSArray<NSString *> *recentLogLines = [self.runtime recentLogLines];
+    if (recentLogLines.count == 0) {
+        NSMenuItem *emptyItem = [[NSMenuItem alloc] initWithTitle:@"No logs in the last 5 minutes"
+                                                           action:nil
+                                                    keyEquivalent:@""];
+        emptyItem.enabled = NO;
+        [self.logsSubmenu addItem:emptyItem];
+        return;
+    }
+
+    for (NSString *line in recentLogLines.reverseObjectEnumerator) {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:line
+                                                      action:nil
+                                               keyEquivalent:@""];
+        item.enabled = NO;
+        [self.logsSubmenu addItem:item];
+    }
 }
 
 - (void)quit:(id)sender {

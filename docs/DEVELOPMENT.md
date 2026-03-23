@@ -54,6 +54,14 @@ The repo currently ships one Objective-C implementation in [main.m](../src/main.
 
 The packaged app is a thin menu bar wrapper around the same runtime.
 
+The menu bar shell also exposes:
+
+- current runtime status
+- recognized display status
+- permission status
+- matched touch-device count
+- recent in-memory logs with a 5-minute retention window
+
 ## Runtime overrides
 
 The packaged app is meant for normal use without Terminal. When debugging from a shell, the runtime also accepts environment overrides such as:

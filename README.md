@@ -19,6 +19,14 @@ After launch, the app runs in the menu bar as `XE`.
 
 Full install steps are in [INSTALL.md](docs/INSTALL.md).
 
+The menu bar app now shows:
+
+- live runtime status
+- whether the XENEON display is currently recognized
+- whether Accessibility and Input Monitoring are granted
+- whether a matching touch device is connected
+- recent in-app logs from the last 5 minutes
+
 ## What the app currently does
 
 - detects the XENEON EDGE display at startup
