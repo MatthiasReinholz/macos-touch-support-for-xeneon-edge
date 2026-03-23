@@ -1,5 +1,7 @@
 # Development
 
+This document is for development, packaging, and release maintenance. Normal app installation and usage are documented in [INSTALL.md](INSTALL.md) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ## Build targets
 
 Run these from the repository root.
@@ -61,7 +63,7 @@ The menu bar shell also exposes:
 - recognized display status
 - permission status
 - matched touch-device count
-- recent in-memory logs with a 5-minute retention window
+- a `Copy Diagnostics` action backed by in-memory logs with a 5-minute retention window
 
 ## Runtime overrides
 

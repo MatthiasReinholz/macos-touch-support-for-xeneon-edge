@@ -20,36 +20,15 @@ Install it like a normal Mac app:
 The app runs as a menu bar utility with a small `XE` status item.
 The `XE` menu shows whether the XENEON display is recognized, whether permissions are granted, whether a matching touch device is present, and offers a `Copy Diagnostics` action.
 
+If permissions still do not seem to apply, remove the app from both `Accessibility` and `Input Monitoring`, add it again, and relaunch it.
+
 ## First launch checklist
 
 Expected startup behavior:
 
 - The app appears in the menu bar.
-- The console log lists the built-in display and the XENEON EDGE display.
-- The XENEON display is marked as the target display.
-- The matching touchscreen HID devices are listed.
-- The menu shows `Status: Ready` once permissions and device matching are in place.
+- The `XE` menu shows the XENEON display as connected.
+- The `XE` menu shows the touchscreen device as matched.
+- The `XE` menu shows `Status: Ready` once permissions and device matching are in place.
 
 If that does not happen, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
-
-## Build from source
-
-For developers or power users:
-
-```bash
-make app
-```
-
-The app bundle will be created at:
-
-- `build/XeneonTouchSupport.app`
-
-To prepare a release zip:
-
-```bash
-make zip
-```
-
-That produces:
-
-- `build/XeneonTouchSupport-macOS.zip`

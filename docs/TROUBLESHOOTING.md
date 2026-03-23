@@ -32,22 +32,13 @@ If the app still does not recognize the permissions after that, remove its entri
 
 ## The wrong display is detected
 
-The app matches the target display by:
+If the app does not recognize the XENEON correctly:
 
-- explicit `XENEON_DISPLAY_ID`, if set
-- otherwise by display-name hints such as `XENEON`, `EDGE`, and `CORSAIR`
+- quit the app
+- confirm the XENEON is connected and visible in macOS display settings
+- relaunch the app and re-check the `XE` status menu
 
-For debugging, launch from Terminal once and inspect the startup log:
-
-```bash
-make run
-```
-
-If needed, pin the display:
-
-```bash
-XENEON_DISPLAY_ID=2 make run
-```
+If it still selects the wrong display, use `Copy Diagnostics` and include the report in an issue.
 
 ## Touches are seen, but taps still behave strangely
 
@@ -67,12 +58,28 @@ The app is most reliable when:
 
 That usually means the native macOS path is handling the second touch well, but the takeover path still needs tuning for that specific app.
 
-Check the startup log for:
+If you want to report that behavior, use `Copy Diagnostics` and include the app name where the problem happens.
 
-- the matched target display
-- matched HID devices
-- the takeover point
-- whether the synthetic click was posted on release
+## Advanced debugging
+
+These steps are only for developers or advanced users.
+
+The app matches the target display by:
+
+- explicit `XENEON_DISPLAY_ID`, if set
+- otherwise by display-name hints such as `XENEON`, `EDGE`, and `CORSAIR`
+
+For debugging, launch from Terminal once and inspect the startup log:
+
+```bash
+make run
+```
+
+If needed, pin the display:
+
+```bash
+XENEON_DISPLAY_ID=2 make run
+```
 
 ## The app is running but I want to stop it
 

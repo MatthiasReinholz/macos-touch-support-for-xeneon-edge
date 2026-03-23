@@ -4,9 +4,9 @@
 
 When the touchscreen is touched while the pointer is on another display, the app moves the pointer onto the XENEON and posts the synthetic click path needed for the touchscreen to act on that display. If the pointer is already on the XENEON, the app leaves the touch alone and lets native macOS behavior handle it.
 
-## What normal users should do
+## Quick Start
 
-1. Download `XeneonTouchSupport-macOS.zip` from a GitHub release.
+1. Download `XeneonTouchSupport-macOS.zip` from the latest GitHub release.
 2. Unzip it.
 3. Drag `XeneonTouchSupport.app` to `/Applications`.
 4. Launch the app.
@@ -19,7 +19,7 @@ After launch, the app runs in the menu bar as `XE`.
 
 Full install steps are in [INSTALL.md](docs/INSTALL.md).
 
-The menu bar app now shows:
+From the `XE` menu bar item, the app shows:
 
 - live runtime status
 - whether the XENEON display is currently recognized
@@ -51,32 +51,10 @@ If behavior is strange in a specific app, see [TROUBLESHOOTING.md](docs/TROUBLES
 
 If permissions seem stuck even after you have granted them, fully remove the app’s entries from both `Accessibility` and `Input Monitoring`, then add the app again and relaunch it.
 
-## GitHub releases
+## Downloads
 
-The repo includes a GitHub Actions release workflow at [.github/workflows/release.yml](.github/workflows/release.yml).
-
-You can publish a release in either of these ways:
-
-- push a tag like `v0.1.0`
-- open GitHub Actions and manually run `Release macOS App`, then choose a `patch`, `minor`, or `major` bump
-
-The workflow will:
-
-- build the macOS app bundle on GitHub-hosted macOS runners
-- calculate the next `vX.Y.Z` tag automatically for manual runs
-- package `XeneonTouchSupport.app` into `XeneonTouchSupport-macOS.zip`
-- upload the zip as a workflow artifact
-- create or update the GitHub release and attach the zip
+Download the packaged app from the repository’s GitHub Releases page.
 
 ## Build from source
 
 If you want to build from source, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).
-
-## Repo layout
-
-- [src/main.m](src/main.m): runtime and menu bar app wrapper
-- [Makefile](Makefile): build, app, and zip targets
-- [packaging/Info.plist](packaging/Info.plist): app bundle metadata
-- [docs/INSTALL.md](docs/INSTALL.md): end-user install guide
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md): troubleshooting guide
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): development notes
