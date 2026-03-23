@@ -11,6 +11,8 @@ APP_EXECUTABLE := $(APP_MACOS)/XeneonTouchSupport
 INFO_PLIST_SRC := packaging/Info.plist
 INFO_PLIST_DST := $(APP_CONTENTS)/Info.plist
 ZIP_OUT := $(BUILD_DIR)/XeneonTouchSupport-macOS.zip
+SIGN_IDENTITY ?= -
+APP_IDENTIFIER := com.matthias.xeneon-touch-support
 
 CFLAGS := -fobjc-arc -Wall -Wextra -Wpedantic
 FRAMEWORKS := -framework AppKit -framework ApplicationServices -framework IOKit
@@ -24,6 +26,9 @@ $(OUT): $(SRC)
 	clang $(CFLAGS) $(FRAMEWORKS) $(SRC) -o $(OUT)
 
 app: $(APP_EXECUTABLE) $(INFO_PLIST_DST)
+	codesign --force --sign "$(SIGN_IDENTITY)" --identifier "$(APP_IDENTIFIER)" --timestamp=none "$(APP_EXECUTABLE)"
+	codesign --force --deep --sign "$(SIGN_IDENTITY)" --identifier "$(APP_IDENTIFIER)" --timestamp=none "$(APP_BUNDLE)"
+	codesign --verify --deep --strict "$(APP_BUNDLE)"
 
 $(APP_EXECUTABLE): $(OUT)
 	mkdir -p "$(APP_MACOS)" "$(APP_RESOURCES)"
