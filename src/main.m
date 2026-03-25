@@ -454,6 +454,28 @@ static BOOL PointIsEffectivelyOnTargetDisplay(NSPoint point, NSRect targetFrame,
     return NSPointInRect(point, expandedFrame);
 }
 
+static CGDirectDisplayID DisplayContainingAppKitPoint(NSPoint point) {
+    CGPoint quartzPoint = QuartzPointForAppKitPoint(point);
+    CGDirectDisplayID displays[8] = { 0 };
+    uint32_t displayCount = 0;
+    CGError error = CGGetDisplaysWithPoint(quartzPoint, (uint32_t)(sizeof(displays) / sizeof(displays[0])), displays, &displayCount);
+    if (error != kCGErrorSuccess || displayCount == 0) {
+        return kCGNullDirectDisplay;
+    }
+    return displays[0];
+}
+
+static BOOL PointShouldBeTreatedAsOnTargetDisplay(NSPoint point,
+                                                  NSRect targetFrame,
+                                                  CGDirectDisplayID targetDisplayID,
+                                                  CGFloat tolerance) {
+    CGDirectDisplayID containingDisplayID = DisplayContainingAppKitPoint(point);
+    if (containingDisplayID != kCGNullDirectDisplay) {
+        return containingDisplayID == targetDisplayID;
+    }
+    return PointIsEffectivelyOnTargetDisplay(point, targetFrame, tolerance);
+}
+
 static BOOL CursorIsNearPoint(NSPoint cursorPoint, CGPoint targetPoint, CGFloat tolerance) {
     return fabs(cursorPoint.x - targetPoint.x) <= tolerance &&
            fabs(cursorPoint.y - targetPoint.y) <= tolerance;
@@ -1208,9 +1230,10 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     NSString *productName = StringProperty(device, CFSTR(kIOHIDProductKey));
     NSPoint pointer = NSEvent.mouseLocation;
     NSPoint originalPointer = pointer;
-    BOOL pointerIsOnTarget = PointIsEffectivelyOnTargetDisplay(pointer,
-                                                               self.targetScreen.frame,
-                                                               kTargetDisplayOwnershipTolerance);
+    BOOL pointerIsOnTarget = PointShouldBeTreatedAsOnTargetDisplay(pointer,
+                                                                   self.targetScreen.frame,
+                                                                   self.targetDisplayID,
+                                                                   kTargetDisplayOwnershipTolerance);
     CFTimeInterval now = CFAbsoluteTimeGetCurrent();
     if (productName == nil) {
         productName = @"Unknown HID Device";
@@ -1348,9 +1371,10 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
                                                      self.targetDisplayID,
                                                      &pressWarpError,
                                                      &pressPointerAfterWarp);
-        BOOL pressPointerOnTargetDisplay = PointIsEffectivelyOnTargetDisplay(pressPointerAfterWarp,
-                                                                             self.targetScreen.frame,
-                                                                             kTargetDisplayOwnershipTolerance);
+        BOOL pressPointerOnTargetDisplay = PointShouldBeTreatedAsOnTargetDisplay(pressPointerAfterWarp,
+                                                                                 self.targetScreen.frame,
+                                                                                 self.targetDisplayID,
+                                                                                 kTargetDisplayOwnershipTolerance);
         self.takeoverHasWarped = pressWarpSucceeded || pressPointerOnTargetDisplay;
         if (self.takeoverHasWarped) {
             self.lastWarpTime = now;
@@ -1443,9 +1467,10 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
               (int)pointerBeforeClick.x,
               (int)pointerBeforeClick.y);
 
-        BOOL pointerOnTargetDisplayAfterReleaseSettle = PointIsEffectivelyOnTargetDisplay(pointerBeforeClick,
-                                                                                          self.targetScreen.frame,
-                                                                                          kTargetDisplayOwnershipTolerance);
+        BOOL pointerOnTargetDisplayAfterReleaseSettle = PointShouldBeTreatedAsOnTargetDisplay(pointerBeforeClick,
+                                                                                              self.targetScreen.frame,
+                                                                                              self.targetDisplayID,
+                                                                                              kTargetDisplayOwnershipTolerance);
         if (!pointerOnTargetDisplayAfterReleaseSettle) {
             NSLog(@"Release cursor-settle did not move the pointer onto the target display. Synthetic click is skipped.");
             self.takeoverActive = NO;
@@ -1570,6 +1595,12 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     self.touchItem.enabled = NO;
     [self.statusMenu addItem:self.touchItem];
 
+    NSMenuItem *refreshCoordinatesItem = [[NSMenuItem alloc] initWithTitle:@"Update Coordinates"
+                                                                    action:@selector(refreshDisplayCoordinates:)
+                                                             keyEquivalent:@""];
+    refreshCoordinatesItem.target = self;
+    [self.statusMenu addItem:refreshCoordinatesItem];
+
     NSMenuItem *copyDiagnosticsItem = [[NSMenuItem alloc] initWithTitle:@"Copy Diagnostics"
                                                                  action:@selector(copyDiagnostics:)
                                                           keyEquivalent:@""];
@@ -1637,6 +1668,13 @@ static void DisplayReconfigurationCallback(CGDirectDisplayID display, CGDisplayC
     [pasteboard clearContents];
     [pasteboard setString:report forType:NSPasteboardTypeString];
     NSLog(@"Copied diagnostics report to the clipboard.");
+    [self updateStatusMenu];
+}
+
+- (void)refreshDisplayCoordinates:(id)sender {
+    (void)sender;
+    NSLog(@"Manual display coordinate refresh requested from menu.");
+    [self.runtime refreshTargetDisplay];
     [self updateStatusMenu];
 }
 
