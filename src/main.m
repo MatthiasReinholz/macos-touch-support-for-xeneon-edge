@@ -196,43 +196,31 @@ static CGDirectDisplayID ConfiguredDisplayIDFromEnvironment(void) {
     return (CGDirectDisplayID)displayID;
 }
 
-static BOOL GlobalDesktopVerticalBounds(CGFloat *minYOut, CGFloat *maxYOut) {
-    NSArray<NSScreen *> *screens = NSScreen.screens;
-    CGFloat globalMinY = CGFLOAT_MAX;
-    CGFloat globalMaxY = -CGFLOAT_MAX;
-
-    for (NSScreen *screen in screens) {
-        NSRect frame = screen.frame;
-        CGFloat minY = NSMinY(frame);
-        CGFloat maxY = NSMaxY(frame);
-        if (minY < globalMinY) {
-            globalMinY = minY;
-        }
-        if (maxY > globalMaxY) {
-            globalMaxY = maxY;
+static NSScreen *MainDisplayScreen(void) {
+    CGDirectDisplayID mainDisplayID = CGMainDisplayID();
+    for (NSScreen *screen in NSScreen.screens) {
+        if (DisplayIDForScreen(screen) == mainDisplayID) {
+            return screen;
         }
     }
 
-    if (globalMinY == CGFLOAT_MAX || globalMaxY == -CGFLOAT_MAX) {
-        return NO;
+    for (NSScreen *screen in NSScreen.screens) {
+        if (NSPointInRect(NSZeroPoint, screen.frame)) {
+            return screen;
+        }
     }
 
-    if (minYOut != NULL) {
-        *minYOut = globalMinY;
-    }
-    if (maxYOut != NULL) {
-        *maxYOut = globalMaxY;
-    }
-    return YES;
+    return NSScreen.screens.firstObject;
 }
 
 static CGPoint QuartzPointForAppKitPoint(CGPoint point) {
-    CGFloat globalMaxY = 0;
-    if (!GlobalDesktopVerticalBounds(NULL, &globalMaxY)) {
+    NSScreen *mainScreen = MainDisplayScreen();
+    if (mainScreen == nil) {
         return point;
     }
 
-    return CGPointMake(point.x, globalMaxY - point.y);
+    CGFloat mainDisplayMaxY = NSMaxY(mainScreen.frame);
+    return CGPointMake(point.x, mainDisplayMaxY - point.y);
 }
 
 static CGPoint QuartzLocalDisplayPointForAppKitPoint(CGPoint point, NSScreen *screen) {
